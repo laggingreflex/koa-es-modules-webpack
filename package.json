@@ -1,6 +1,6 @@
 {
   "name": "koa-es-modules-webpack",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Koa middleware to serve ES6 Modules using Webpack bundler",
   "main": "index.js",
   "repository": "laggingreflex/koa-es-modules-webpack",
