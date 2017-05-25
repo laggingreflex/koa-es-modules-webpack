@@ -75,34 +75,40 @@ module.exports = ({
   });
   let responded = false
   const respond = (err, data) => {
-    if (responded) {
-      return;
-    } else {
-      responded = true;
-    }
     if (err) {
-      next(err);
-      debug(err.message);
+      console.error(err);
+      if (!responded) {
+        responded = true;
+        next(err);
+      }
+    } else if (responded) {
+      debug('Already responded for this request');
     } else {
       debug('Responding with generated code');
+      responded = true;
       ctx.body = data;
     }
   }
   watcherCache[path] = await run(async(err, stats) => {
-    if (err) {
+    debug('Bundle generation triggered');
+    try {
+      if (err) {
+        respond(err);
+        return;
+      }
+      const info = stats.toJson();
+      if (stats.hasErrors()) {
+        respond(info.errors);
+        return;
+      }
+      if (warn && stats.hasWarnings()) {
+        console.warn(info.warnings);
+      }
+      cache[path] = await fs.readFile(cachePath, 'utf8');
+      respond(null, cache[path]);
+      debug('Bundle generated');
+    } catch (error) {
       respond(err);
-      return;
     }
-    const info = stats.toJson();
-    if (stats.hasErrors()) {
-      respond(info.errors);
-      return;
-    }
-    if (warn && stats.hasWarnings()) {
-      console.warn(info.warnings);
-    }
-    cache[path] = await fs.readFile(cachePath, 'utf8');
-    respond(null, cache[path]);
-    debug('Bundle generated');
   });
 };
