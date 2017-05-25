@@ -20,6 +20,9 @@ Checkout the [example](example)
 app.use(esWebpack(opts))
 ```
 
-* **`root`** Root directly to serve and resolve JS assets from
+* **`root`** `[string](required)` Root directly to serve and resolve JS assets from
+* **`cacheDir`** `[string](default:<root>/.webpack-cache)` Dir to put generated bundles
+* **`watch`** `[boolean](default:false)` Watches requested modules for subsequent file-changes
+* **`webpackConfig`** `[object]` Custom webpackConfig to use
 
 
