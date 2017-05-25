@@ -1,12 +1,13 @@
 const Path = require('path');
 const fs = require('fs-extra');
 const webpack = require('webpack');
-const debug = require('debug')('koa-es-modules-webpack');
-// const debug = (...msg) => console.log('koa-es-modules-webpack', ...msg)
+const _debug = require('debug')('koa-es-modules-webpack');
+// const _debug = (...msg) => console.log('koa-es-modules-webpack', ...msg)
 
 const mandate = reason => { throw new Error(reason) }
 
 const cache = {};
+const watcherCache = {};
 const defaultWebpackConfig = {};
 
 module.exports = ({
@@ -15,39 +16,47 @@ module.exports = ({
   ext = ['js'],
   webpackConfig: webpackConfigArg = {},
   warn = false,
+  watch = false,
 } = {}) => async(ctx, next) => {
+  const debug = (...msg) => _debug(ctx.path, ...msg)
 
   if (ctx.method !== 'GET') {
-    debug('Not processing', ctx.path, 'method!=GET');
+    debug('Not processing', 'method!=GET');
     return next();
   }
 
   if (ext.indexOf(ctx.path.substr(-2)) == -1) {
-    debug('Not processing', ctx.path, 'ext!=' + ext);
+    debug('Not processing', 'ext!=' + ext);
     return next();
   }
 
   const path = Path.join(root, ctx.path);
   const cachePath = Path.join(cacheDir, ctx.path);
 
-  if (cache[path]) {
-    return ctx.body = cache[path];
+  if (!watch || watcherCache[path]) {
+    if (cache[path]) {
+      debug('Serving from mem-cache');
+      return ctx.body = cache[path];
+    }
+
+    try {
+      ctx.body = cache[path] = await fs.readFile(cachePath, 'utf8');
+      debug('Serving from file-cache');
+      return;
+    } catch (err) {
+      // debug(`Couldn't load from file-cache`, cachePath, err.message);
+    }
   }
 
-  try {
-    return ctx.body = cache[path] = await fs.readFile(cachePath, 'utf8');
-  } catch (err) {
-    debug(`Couldn't load from cache`, cachePath, err.message);
-  }
 
   try {
     await fs.access(path);
   } catch (err) {
-    debug('Not processing', ctx.path, '!exists', path, err.message);
+    debug('Not processing, !exists', path, err.message);
     return next();
   }
 
-  debug('Processing', ctx.path, '=>', path);
+  debug('Processing', path);
 
   const webpackConfig = Object.assign({
     entry: path,
@@ -57,33 +66,43 @@ module.exports = ({
     }
   }, defaultWebpackConfig, webpackConfigArg);
 
-  let stats;
-  try {
-    stats = await new Promise((c, x) => webpack(webpackConfig, (webpackError, stats) => {
-      if (webpackError) {
-        return x(webpackError);
-      }
-      const info = stats.toJson();
-      if (stats.hasErrors()) {
-        return x(info.errors);
-      }
-      if (warn && stats.hasWarnings()) {
-        console.warn(info.warnings);
-      }
-      c(stats);
-    }))
-  } catch (error) {
-    console.error(error);
-    return next(error);
-  }
+  const compiler = webpack(webpackConfig);
 
-  debug('Bundle generated');
-
-  try {
-    debug('Responding with generated code');
-    return ctx.body = cache[path] = await fs.readFile(cachePath, 'utf8');
-  } catch (err) {
-    debug(`Couldn't respond with webpack generated code`, cachePath, err.message);
-    throw err;
+  const run = cb => new Promise((ok, x) => {
+    let ret;
+    const pcb = (...args) => cb(...args).then(() => ok(ret)).catch(x)
+    ret = watch ? compiler.watch({}, pcb) : compiler.run(pcb);
+  });
+  let responded = false
+  const respond = (err, data) => {
+    if (responded) {
+      return;
+    } else {
+      responded = true;
+    }
+    if (err) {
+      next(err);
+      debug(err.message);
+    } else {
+      debug('Responding with generated code');
+      ctx.body = data;
+    }
   }
+  watcherCache[path] = await run(async(err, stats) => {
+    if (err) {
+      respond(err);
+      return;
+    }
+    const info = stats.toJson();
+    if (stats.hasErrors()) {
+      respond(info.errors);
+      return;
+    }
+    if (warn && stats.hasWarnings()) {
+      console.warn(info.warnings);
+    }
+    cache[path] = await fs.readFile(cachePath, 'utf8');
+    respond(null, cache[path]);
+    debug('Bundle generated');
+  });
 };
